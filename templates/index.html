@@ -1,0 +1,381 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Virtual Tour Guide · Chat</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <!-- Markdown renderer + sanitizer -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body class="chat-page">
+<header class="site-header">
+  <div class="brand">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M12 2l3.5 7H23l-6 4.5L19 21l-7-4.5L5 21l2-7.5L1 9h7.5L12 2z" fill="currentColor" opacity="0.9"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <strong>Virtual Tour Guide</strong>
+      <span class="sub">Dialogue · IR · Itinerary · Safety</span>
+    </div>
+  </div>
+  <nav class="header-nav">
+    <a class="link" href="/logout" title="Sign out">Logout</a>
+  </nav>
+</header>
+
+<main class="container layout">
+  <aside class="sidebar glass-card">
+    <div class="sidebar-content">
+      <div class="quick-prompts-section">
+        <h2 class="card-title">Quick prompts</h2>
+        <div class="chip-row" id="static-chips">
+          <button class="chip" data-fill="Tell me about Sigiriya">About Jaffna</button>
+          <button class="chip" data-fill="Tell me about Kandy">About Kandy</button>
+          <button class="chip" data-fill="Plan a 3-hour tour in Kandy">3-hour Kandy tour</button>
+          <button class="chip" data-fill="Plan a 2-hour tour in Galle">2 day Galle tour</button>
+        </div>
+      </div>
+
+      <section class="chat-history glass-sub" id="chat-history" style="display:none;">
+        <div class="status-title">💬 Chat History</div>
+        <div class="history-list" id="history-list"></div>
+      </section>
+
+      <section class="status glass-sub" id="status" style="display:none;">
+        <div class="status-title">Trip context</div>
+        <div class="status-line"><span id="ctx-city"></span></div>
+        <div class="status-line"><span id="ctx-mins"></span></div>
+      </section>
+    </div>
+  </aside>
+
+  <section class="chat-panel glass-card chat-card">
+    <div class="chat-actions" style="display:flex; justify-content: space-between; align-items:center; margin-bottom:8px;">
+      <strong>Assistant</strong>
+      <div style="display:flex; gap:8px;">
+        <button id="btn-new-chat" class="chip" type="button" title="Start new chat">New Chat</button>
+        <button id="btn-clear" class="chip" type="button" title="Clear all messages">Clear All</button>
+      </div>
+    </div>
+    <div class="chat-messages" id="messages" aria-live="polite"></div>
+
+    <form id="chat-form" class="composer" autocomplete="off">
+      <textarea id="input" class="input" rows="2" placeholder="Ask: Tell me about Sigiriya / Plan a 3-hour tour in Kandy" required></textarea>
+      <button id="sendBtn" class="btn-primary" type="submit">Send</button>
+    </form>
+
+    <div class="footer-note">Tips: Ask for facts or a mini tour. Time like "2 hours".</div>
+  </section>
+</main>
+
+<script>
+  const form = document.getElementById('chat-form');
+  const input = document.getElementById('input');
+  const messages = document.getElementById('messages');
+  const sendBtn = document.getElementById('sendBtn');
+  const chips = document.getElementById('static-chips');
+
+  const statusBox = document.getElementById('status');
+  const ctxCity = document.getElementById('ctx-city');
+  const ctxMins = document.getElementById('ctx-mins');
+
+  function renderMarkdownSafe(md) {
+    const html = marked.parse(md || '');
+    return DOMPurify.sanitize(html);
+  }
+
+  function addBubble(text, who, suggestions = [], id = null) {
+    const div = document.createElement('div');
+    div.className = 'bubble ' + (who === 'user' ? 'user' : 'bot');
+    if (id) div.dataset.id = id;
+
+    if (who === 'bot') {
+      div.innerHTML = renderMarkdownSafe(text);
+    } else {
+      div.innerText = text;
+    }
+    
+    // container row (no per-message delete controls)
+    const row = document.createElement('div');
+    row.appendChild(div);
+    messages.appendChild(row);
+
+    // context-aware suggestion chips (from server)
+    if (who === 'bot' && suggestions && suggestions.length) {
+      const row = document.createElement('div');
+      row.className = 'chip-row';
+      suggestions.forEach(s => {
+        const b = document.createElement('button');
+        b.className = 'chip';
+        b.textContent = s;
+        b.addEventListener('click', () => {
+          input.value = s;
+          form.requestSubmit();
+        });
+        row.appendChild(b);
+      });
+      messages.appendChild(row);
+    }
+
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  // Enter to send; Shift+Enter for newline
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  // Prefill from static chips
+  chips.addEventListener('click', (e) => {
+    if (e.target.classList.contains('chip')) {
+      input.value = e.target.dataset.fill || e.target.textContent;
+      input.focus();
+    }
+  });
+
+  async function refreshState(){
+    try{
+      const r = await fetch('/state');
+      if(!r.ok) return;
+      const s = await r.json();
+      const has = (s.city || s.minutes);
+      statusBox.style.display = has ? 'block' : 'none';
+      ctxCity.textContent = s.city ? ` · City: ${s.city}` : '';
+      ctxMins.textContent = s.minutes ? ` · Time: ${s.minutes} min` : '';
+    }catch {}
+  }
+
+  async function loadHistory(){
+    messages.innerHTML = '';
+    try{
+      const r = await fetch('/history');
+      if(!r.ok) return;
+      const hist = await r.json();
+      hist.forEach(m => {
+        addBubble(m.text, m.who, [], m.id);
+      });
+      messages.scrollTop = messages.scrollHeight;
+      
+      // Update chat history sidebar
+      updateChatHistorySidebar(hist);
+    }catch{}
+  }
+
+  function updateChatHistorySidebar(history) {
+    const chatHistoryDiv = document.getElementById('chat-history');
+    const historyList = document.getElementById('history-list');
+    
+    if (!history || history.length === 0) {
+      chatHistoryDiv.style.display = 'none';
+      return;
+    }
+    
+    chatHistoryDiv.style.display = 'flex';
+    historyList.innerHTML = '';
+    
+    // Group messages by chat sessions (split by bot greetings)
+    const sessions = [];
+    let currentSession = [];
+    
+    history.forEach((msg, index) => {
+      if (msg.who === 'bot' && (msg.text.includes('Hello!') || msg.text.includes('Good morning') || msg.text.includes('Good afternoon') || msg.text.includes('Good evening'))) {
+        if (currentSession.length > 0) {
+          sessions.push([...currentSession]);
+        }
+        currentSession = [msg];
+      } else {
+        currentSession.push(msg);
+      }
+    });
+    
+    if (currentSession.length > 0) {
+      sessions.push(currentSession);
+    }
+    
+    // Show only the first user message from each session (last 6 sessions)
+    const sessionFirstMessages = sessions
+      .map(session => session.find(msg => msg.who === 'user'))
+      .filter(msg => msg)
+      .slice(-6);
+    
+    if (sessionFirstMessages.length === 0) {
+      chatHistoryDiv.style.display = 'none';
+      return;
+    }
+    
+    sessionFirstMessages.forEach((msg, index) => {
+      const historyItem = document.createElement('div');
+      historyItem.className = 'history-item';
+      historyItem.dataset.messageId = msg.id;
+      
+      // Create the main content
+      const contentDiv = document.createElement('div');
+      contentDiv.style.flex = '1';
+      contentDiv.style.display = 'flex';
+      contentDiv.style.alignItems = 'center';
+      
+      // Truncate long messages but keep them readable
+      const displayText = msg.text.length > 50 ? msg.text.substring(0, 50) + '...' : msg.text;
+      contentDiv.textContent = displayText;
+      contentDiv.title = msg.text; // Show full text on hover
+      
+      // Create delete button
+      const deleteBtn = document.createElement('button');
+      deleteBtn.innerHTML = '×';
+      deleteBtn.className = 'delete-history-btn';
+      deleteBtn.title = 'Delete this chat';
+      deleteBtn.style.cssText = `
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 18px;
+        font-weight: bold;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 50%;
+        transition: all 0.2s ease;
+        margin-left: 8px;
+        opacity: 0.7;
+      `;
+      
+      // Style the history item
+      historyItem.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        background: rgba(255,255,255,0.7);
+        border: 1px solid rgba(255,255,255,0.5);
+        border-radius: 12px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1.4;
+        word-wrap: break-word;
+        position: relative;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+      `;
+      
+      // Add click handler for the main content
+      contentDiv.addEventListener('click', () => {
+        input.value = msg.text;
+        input.focus();
+        // Auto-submit the query
+        setTimeout(() => {
+          form.requestSubmit();
+        }, 100);
+      });
+      
+      // Add delete handler
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent triggering the click on historyItem
+        deleteHistoryMessage(msg.id);
+      });
+      
+      // Hover effects
+      historyItem.addEventListener('mouseenter', () => {
+        historyItem.style.background = 'rgba(59,130,246,0.15)';
+        historyItem.style.transform = 'translateY(-2px)';
+        historyItem.style.boxShadow = '0 4px 12px rgba(59,130,246,0.2)';
+        deleteBtn.style.opacity = '1';
+        deleteBtn.style.background = 'rgba(239, 68, 68, 0.1)';
+        deleteBtn.style.color = '#ef4444';
+      });
+      
+      historyItem.addEventListener('mouseleave', () => {
+        historyItem.style.background = 'rgba(255,255,255,0.7)';
+        historyItem.style.transform = 'translateY(0)';
+        historyItem.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+        deleteBtn.style.opacity = '0.7';
+        deleteBtn.style.background = 'none';
+        deleteBtn.style.color = '#666';
+      });
+      
+      historyItem.appendChild(contentDiv);
+      historyItem.appendChild(deleteBtn);
+      historyList.appendChild(historyItem);
+    });
+  }
+  
+  async function deleteHistoryMessage(messageId) {
+    try {
+      const response = await fetch(`/history/${messageId}`, { method: 'DELETE' });
+      if (response.ok) {
+        // Reload history to update the sidebar
+        loadHistory();
+      }
+    } catch (err) {
+      console.error('Error deleting message:', err);
+    }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+
+    // optimistic user bubble without id yet
+    addBubble(text, 'user');
+    input.value = '';
+    input.disabled = true; sendBtn.disabled = true;
+
+    // simple typing indicator
+    const t = document.createElement('div');
+    t.className = 'bubble bot typing';
+    t.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    messages.appendChild(t); messages.scrollTop = messages.scrollHeight;
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ message: text })
+      });
+      const data = await res.json();
+      t.remove();
+      addBubble(data.reply || '(no reply)', 'bot', data.suggestions || []);
+      // Optionally refresh full history to get IDs in sync
+      loadHistory();
+      refreshState();
+    } catch (err) {
+      t.remove();
+      addBubble('Error contacting server. Please try again.', 'bot');
+    } finally {
+      input.disabled = false; sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+
+  // initial state fetch
+  refreshState();
+  loadHistory();
+
+  document.getElementById('btn-clear').addEventListener('click', async () => {
+    try{ await fetch('/history', { method:'DELETE' }); } catch {}
+    loadHistory();
+  });
+
+  document.getElementById('btn-new-chat').addEventListener('click', async () => {
+    try {
+      const res = await fetch('/new-chat', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        messages.innerHTML = '';
+        addBubble(data.reply, 'bot', data.suggestions || []);
+        refreshState();
+      }
+    } catch (err) {
+      console.error('Error starting new chat:', err);
+    }
+  });
+</script>
+</body>
+</html>
