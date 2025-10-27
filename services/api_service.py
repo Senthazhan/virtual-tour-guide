@@ -37,9 +37,15 @@ class APIService:
         self.gemini_service = GeminiService()
         
     def get_wikipedia_info(self, query: str) -> Optional[Dict]:
-        """Get comprehensive tourism information using Gemini AI"""
+        """Get comprehensive tourism information from Wikipedia API, fallback to Gemini AI"""
         try:
-            # Use Gemini service for comprehensive tourism data
+            # Try Wikipedia API first
+            wiki_data = self._get_wikipedia_place_info(query)
+            if wiki_data:
+                return wiki_data
+            
+            # Fallback to Gemini service if Wikipedia fails
+            logger.info(f"Wikipedia API failed for {query}, falling back to Gemini demo data")
             result = self.gemini_service.get_tourism_info(query)
             
             if result.get("success"):
@@ -52,7 +58,7 @@ class APIService:
                     "thumbnail": "",
                     "coordinates": {},
                     "type": "tourist_attraction",
-                    "source": "gemini_ai",
+                    "source": "gemini_ai_fallback",
                     "highlights": data.get("highlights", []),
                     "best_time": data.get("best_time", ""),
                     "entry_fees": data.get("entry_fees", ""),
@@ -67,11 +73,128 @@ class APIService:
         
         return None
     
+    def _get_wikipedia_place_info(self, place_name: str) -> Optional[Dict]:
+        """Get Wikipedia information for a specific place"""
+        try:
+            # Clean the place name for Wikipedia
+            clean_name = place_name.replace(" ", "_").title()
+            
+            # Try different Wikipedia search strategies
+            search_terms = [
+                f"{place_name}, Sri Lanka",
+                f"{place_name} (Sri Lanka)",
+                place_name,
+                clean_name
+            ]
+            
+            for term in search_terms:
+                url = "https://en.wikipedia.org/api/rest_v1/page/summary"
+                params = {'q': term}
+                
+                response = self.session.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Check if it's about Sri Lanka
+                    extract = data.get("extract", "").lower()
+                    if "sri lanka" in extract or "lanka" in extract or "ceylon" in extract:
+                        return {
+                            "title": data.get("title", place_name),
+                            "extract": data.get("extract", ""),
+                            "description": data.get("description", ""),
+                            "url": data.get("content_urls", {}).get("desktop", {}).get("page", ""),
+                            "thumbnail": data.get("thumbnail", {}).get("source", ""),
+                            "coordinates": data.get("coordinates", {}),
+                            "type": "place_info",
+                            "source": "wikipedia_api"
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Wikipedia place info error for {place_name}: {e}")
+            return None
+    
+    def _get_real_weather(self, location: str) -> Dict:
+        """Get real weather data from OpenWeatherMap API"""
+        try:
+            # Map Sri Lankan cities to coordinates for better accuracy
+            city_coords = {
+                "colombo": {"lat": 6.9271, "lon": 79.8612},
+                "kandy": {"lat": 7.2906, "lon": 80.6337},
+                "galle": {"lat": 6.0329, "lon": 80.2170},
+                "sigiriya": {"lat": 7.9575, "lon": 80.7603},
+                "anuradhapura": {"lat": 8.3114, "lon": 80.4037},
+                "negombo": {"lat": 7.2086, "lon": 79.8358},
+                "jaffna": {"lat": 9.6615, "lon": 80.0255},
+                "ella": {"lat": 6.8667, "lon": 81.0500},
+                "nuwara eliya": {"lat": 6.9497, "lon": 80.7891},
+                "trincomalee": {"lat": 8.5874, "lon": 81.2152}
+            }
+            
+            # Try to get coordinates for the location
+            location_lower = location.lower().strip()
+            if location_lower in city_coords:
+                coords = city_coords[location_lower]
+                url = f"https://api.openweathermap.org/data/2.5/weather"
+                params = {
+                    'lat': coords['lat'],
+                    'lon': coords['lon'],
+                    'appid': self.openweather_api_key,
+                    'units': 'metric'
+                }
+            else:
+                # Use city name search
+                url = f"https://api.openweathermap.org/data/2.5/weather"
+                params = {
+                    'q': f"{location},LK",  # LK = Sri Lanka country code
+                    'appid': self.openweather_api_key,
+                    'units': 'metric'
+                }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            
+            # Check for authentication errors
+            if response.status_code == 401:
+                logger.warning(f"Invalid OpenWeatherMap API key for {location}")
+                return self.gemini_service.get_weather_info(location)
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract weather information
+            main = data.get('main', {})
+            weather = data.get('weather', [{}])[0]
+            wind = data.get('wind', {})
+            
+            return {
+                "temperature": f"{main.get('temp', 0):.1f}°C",
+                "condition": weather.get('description', 'Unknown').title(),
+                "humidity": f"{main.get('humidity', 0)}%",
+                "wind_speed": f"{wind.get('speed', 0):.1f} km/h",
+                "feels_like": f"{main.get('feels_like', 0):.1f}°C",
+                "pressure": f"{main.get('pressure', 0)} hPa",
+                "description": f"Real-time weather in {location.title()} - {weather.get('description', '')}",
+                "source": "openweather_api",
+                "last_updated": "Just now"
+            }
+            
+        except Exception as e:
+            logger.error(f"Real weather API error for {location}: {e}")
+            # Fallback to demo data if real API fails
+            return self.gemini_service.get_weather_info(location)
+    
     def get_weather_info(self, location: str) -> Optional[Dict]:
         """Get real-time weather information"""
         try:
-            # Use Gemini service for location-specific weather data
-            return self.gemini_service.get_weather_info(location)
+            # Check if we have a real API key
+            if self.openweather_api_key and self.openweather_api_key != 'demo_key':
+                # Make real API call to OpenWeatherMap
+                return self._get_real_weather(location)
+            else:
+                # Use Gemini service for demo weather data
+                return self.gemini_service.get_weather_info(location)
                 
         except Exception as e:
             logger.error(f"Weather API error for {location}: {e}")

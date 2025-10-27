@@ -1,7 +1,3 @@
-"""
-Smart Tour Guide Agent - ChatGPT-like conversational AI for tourism
-"""
-
 import re
 import difflib
 import json
@@ -10,7 +6,7 @@ from services.api_service import APIService
 from agents.simple_safety import check_input, get_violation_response
 
 class SmartGuide:
-    """Intelligent tour guide that works like ChatGPT for tourism"""
+    """Intelligent tour guide for tourism"""
     
     def __init__(self):
         self.api_service = APIService()

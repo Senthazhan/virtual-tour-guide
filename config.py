@@ -15,7 +15,7 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key-here')
     
     # API Keys
-    OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY', 'demo_key')
+    OPENWEATHER_API_KEY = os.getenv('OPENWEATHER_API_KEY', '66982acfea538d30203e2f317d820f90')
     GOOGLE_PLACES_API_KEY = os.getenv('GOOGLE_PLACES_API_KEY', 'demo_key')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'demo_key')
     

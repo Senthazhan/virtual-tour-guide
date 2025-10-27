@@ -1,0 +1,14 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Env & logs
+.env
+*.env
+logs/
+*.log
+
+# Project-specific
+irwa-tour/.env
